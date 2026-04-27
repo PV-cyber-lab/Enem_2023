@@ -7,6 +7,10 @@ import re
 import warnings
 warnings.filterwarnings("ignore")
 
+print("\n" + "="*70)
+print("🚀 INICIANDO APP ENEM 2023 - CEARÁ VS BRASIL")
+print("="*70)
+
 st.set_page_config(
     page_title="ENEM 2023 · CE vs BR",
     page_icon="📊",
@@ -87,33 +91,88 @@ def _faixa(x):
 
 @st.cache_data(show_spinner="Carregando dados…")
 def load(path: str) -> pd.DataFrame:
-    df = pd.read_parquet(path, columns=COLS_LOAD)
-    df = df[(df[PRESENCA] == "Presente").all(axis=1)].drop(columns=PRESENCA).copy()
-    df.dropna(subset=NOTAS, inplace=True)
-    df["Média Geral"] = df[NOTAS].mean(axis=1).round(2)
-    df["Faixa Etária"] = df["Faixa Etária"].apply(_faixa)
-    df["Treineiro"] = df["Treineiro"].astype(str).str.strip().str.upper().isin(["1","SIM","S","TRUE"])
-    cat_cols = [
-        "Sexo", "Cor/Raça", "Tipo de Escola do Ensino Médio", "Sigla da UF da Escola",
-        "Situação de Conclusão do Ensino Médio", "Renda Mensal Familiar",
-        "Escolaridade do Pai/Responsável Homem", "Escolaridade da Mãe/Responsável Mulher",
-        "Acesso à Internet na Residência", "Computador na Residência",
-        "Quantidade de Pessoas na Residência",
-    ]
-    for c in cat_cols:
-        df[c] = df[c].astype(str).str.strip()
-    return df
+    print(f"\n[LOAD] Iniciando carregamento de: {path}")
+    try:
+        print("[LOAD] 1/7 - Lendo arquivo parquet...")
+        df = pd.read_parquet(path, columns=COLS_LOAD)
+        print(f"[LOAD]   ✓ Lido: {df.shape[0]:,} linhas × {df.shape[1]} colunas")
+        print(f"[LOAD]   ✓ Memória inicial: {df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
+        
+        print("[LOAD] 2/7 - Filtrando presença em todas as provas...")
+        mask_presenca = (df[PRESENCA] == "Presente").all(axis=1)
+        df = df[mask_presenca].drop(columns=PRESENCA).copy()
+        print(f"[LOAD]   ✓ Mantidos: {df.shape[0]:,} registros com presença completa")
+        
+        print("[LOAD] 3/7 - Removendo linhas com notas faltantes...")
+        df.dropna(subset=NOTAS, inplace=True)
+        print(f"[LOAD]   ✓ Mantidos: {df.shape[0]:,} registros com todas as notas")
+        
+        print("[LOAD] 4/7 - Calculando Média Geral...")
+        df["Média Geral"] = df[NOTAS].mean(axis=1).round(2)
+        print(f"[LOAD]   ✓ Média Geral calculada")
+        
+        print("[LOAD] 5/7 - Processando Faixa Etária...")
+        df["Faixa Etária"] = df["Faixa Etária"].apply(_faixa)
+        print(f"[LOAD]   ✓ Faixa Etária processada")
+        
+        print("[LOAD] 6/7 - Processando Treineiro...")
+        df["Treineiro"] = df["Treineiro"].astype(str).str.strip().str.upper().isin(["1","SIM","S","TRUE"])
+        print(f"[LOAD]   ✓ Treineiro processado")
+        
+        print("[LOAD] 7/7 - Otimizando tipos de dados...")
+        
+        # Categorias
+        cat_cols = [
+            "Sexo", "Cor/Raça", "Tipo de Escola do Ensino Médio", "Sigla da UF da Escola",
+            "Situação de Conclusão do Ensino Médio", "Renda Mensal Familiar",
+            "Escolaridade do Pai/Responsável Homem", "Escolaridade da Mãe/Responsável Mulher",
+            "Acesso à Internet na Residência", "Computador na Residência",
+            "Quantidade de Pessoas na Residência", "Faixa Etária",
+        ]
+        for c in cat_cols:
+            df[c] = df[c].astype(str).str.strip()
+            df[c] = df[c].astype("category")
+        print(f"[LOAD]   ✓ {len(cat_cols)} colunas convertidas para category")
+        
+        # Notas em int16 (otimizado: range 0-1000, seguro em int16)
+        for nota_col in NOTAS:
+            df[nota_col] = df[nota_col].astype("int16")
+        print(f"[LOAD]   ✓ {len(NOTAS)} colunas de notas convertidas para int16")
+        
+        # Outras colunas numéricas
+        df["Treineiro"] = df["Treineiro"].astype("bool")
+        df["Média Geral"] = (df["Média Geral"] * 100).astype("int16")  # Multiplica por 100 para manter 2 casas decimais em int16
+        print(f"[LOAD]   ✓ Treineiro convertido para bool")
+        print(f"[LOAD]   ✓ Média Geral convertida para int16")
+        
+        print(f"[LOAD]   ✓ Memória final: {df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
+        print(f"[LOAD] ✅ Carregamento concluído com sucesso!")
+        
+        return df
+    
+    except Exception as e:
+        print(f"[LOAD] ❌ ERRO durante carregamento: {str(e)}")
+        print(f"[LOAD] Tipo de erro: {type(e).__name__}")
+        raise
 
 
 @st.cache_data(show_spinner=False)
 def get_data():
-    return (
-        load("https://drive.google.com/uc?export=download&id=1vSH8dq5_Hm0hB-8r9fs9mtdL9sbqWrEF"),
-        load("https://drive.google.com/uc?export=download&id=1uBLgOZHo9AjZxWW8dWnH4bVTGjtafNdk"),
-    )
+    print("\n[GET_DATA] Iniciando carregamento dos datasets...")
+    print("[GET_DATA] Carregando: Ceará")
+    df_ce = load("https://drive.google.com/uc?export=download&id=1vSH8dq5_Hm0hB-8r9fs9mtdL9sbqWrEF")
+    
+    print("[GET_DATA] Carregando: Resto do Brasil")
+    df_br = load("https://drive.google.com/uc?export=download&id=1uBLgOZHo9AjZxWW8dWnH4bVTGjtafNdk")
+    
+    print("[GET_DATA] ✅ Ambos os datasets carregados com sucesso!")
+    return (df_ce, df_br)
 
 
+print("\n[INIT] Carregando datasets...")
 df_ce_full, df_br_full = get_data()
+print(f"[INIT] ✓ Ceará: {len(df_ce_full):,} registros")
+print(f"[INIT] ✓ Brasil: {len(df_br_full):,} registros")
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -169,6 +228,7 @@ def legend_right(fig):
 # ══════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════
+print("\n[SIDEBAR] Configurando sidebar com filtros...")
 st.sidebar.title("⚙️ Filtros")
 
 # Sexo
@@ -213,29 +273,40 @@ def filtrar(df):
 fce = filtrar(df_ce_full)
 fbr = filtrar(df_br_full)
 
+print(f"\n[FILTERS] Aplicados filtros:")
+print(f"[FILTERS] ✓ Ceará: {len(fce):,} registros")
+print(f"[FILTERS] ✓ Brasil: {len(fbr):,} registros")
+
 st.sidebar.divider()
 st.sidebar.caption(f"Ceará: {len(fce):,} registros")
 st.sidebar.caption(f"Resto do Brasil: {len(fbr):,} registros")
 
 # ── Validação global ──────────────────────────────────────────────
+print("\n[VALIDATION] Validando dados após filtros...")
 _vazio_ce = len(fce) == 0
 _vazio_br = len(fbr) == 0
 if _vazio_ce or _vazio_br:
     partes = []
     if _vazio_ce: partes.append("**Ceará**")
     if _vazio_br: partes.append("**Resto do Brasil**")
+    print(f"[VALIDATION] ⚠️ AVISO: Sem dados para {' e '.join(partes)}")
     st.warning(
         f"⚠️ Nenhum dado disponível para {' e '.join(partes)} com os filtros selecionados. "
         "Ajuste os filtros na barra lateral.",
     )
     st.stop()
 
+print("[VALIDATION] ✅ Validação passou com sucesso!")
+
 
 # ══════════════════════════════════════════════════════════════════
 # HEADER + MÉTRICAS
 # ══════════════════════════════════════════════════════════════════
+print("\n[UI] Renderizando interface...")
 st.title("📊 ENEM 2023 · Ceará vs Resto do Brasil")
 st.divider()
+
+print("[UI] ✓ Header renderizado")
 
 with st.expander("📌 Premissas e metodologia", expanded=False):
     st.markdown("""
@@ -273,6 +344,7 @@ st.divider()
 # ══════════════════════════════════════════════════════════════════
 # ABAS
 # ══════════════════════════════════════════════════════════════════
+print("\n[TABS] Criando abas...")
 tabs = st.tabs([
     "📊 Distribuição Geral",
     "📚 Por Disciplina",
@@ -720,3 +792,7 @@ with tabs[6]:
 
 st.divider()
 st.caption("ENEM 2023 · Ceará × Resto do Brasil · presença obrigatória em todas as provas")
+
+print("\n" + "="*70)
+print("✅ APP RENDERIZADO COM SUCESSO!")
+print("="*70 + "\n")
