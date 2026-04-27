@@ -88,7 +88,6 @@ def _faixa(x):
 @st.cache_data(show_spinner="Carregando dados…")
 def load(path: str) -> pd.DataFrame:
     df = pd.read_parquet(path, columns=COLS_LOAD)
-    # Apenas presentes em todas as provas
     df = df[(df[PRESENCA] == "Presente").all(axis=1)].drop(columns=PRESENCA).copy()
     df.dropna(subset=NOTAS, inplace=True)
     df["Média Geral"] = df[NOTAS].mean(axis=1).round(2)
@@ -108,7 +107,10 @@ def load(path: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def get_data():
-    return load("dados_ceara.parquet"), load("dados_sem_ceara.parquet")
+    return (
+        load("https://drive.google.com/uc?export=download&id=1vSH8dq5_Hm0hB-8r9fs9mtdL9sbqWrEF"),
+        load("https://drive.google.com/uc?export=download&id=1uBLgOZHo9AjZxWW8dWnH4bVTGjtafNdk"),
+    )
 
 
 df_ce_full, df_br_full = get_data()
@@ -140,66 +142,130 @@ def reindex_col(df_g, col, order):
     return df_g.set_index(col).reindex(ordem).dropna(how="all").reset_index()
 
 
+def legend_top(fig):
+    """Legenda horizontal acima do gráfico (para barras/radar)."""
+    fig.update_layout(legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="left",
+        x=0,
+    ))
+    return fig
+
+
+def legend_right(fig):
+    """Legenda vertical à direita (para gráficos de linha com título longo)."""
+    fig.update_layout(legend=dict(
+        orientation="v",
+        yanchor="middle",
+        y=0.5,
+        xanchor="left",
+        x=1.01,
+    ))
+    return fig
+
+
 # ══════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════════
 st.sidebar.title("⚙️ Filtros")
-escopo = st.sidebar.radio("Escopo", ["Ceará", "Resto do Brasil", "CE × BR"], index=2)
 
-_ref = df_ce_full if escopo == "Ceará" else df_br_full
-sexo_opts   = sorted(_ref["Sexo"].dropna().unique())
-escola_opts = sorted(_ref["Tipo de Escola do Ensino Médio"].dropna().unique())
+# Sexo
+sexo_opts   = sorted(set(df_ce_full["Sexo"].dropna().unique()) | set(df_br_full["Sexo"].dropna().unique()))
+escola_opts = sorted(set(df_ce_full["Tipo de Escola do Ensino Médio"].dropna().unique()) | set(df_br_full["Tipo de Escola do Ensino Médio"].dropna().unique()))
 
 sexo_sel   = st.sidebar.multiselect("Sexo",   sexo_opts,   default=sexo_opts)
 escola_sel = st.sidebar.multiselect("Escola", escola_opts, default=escola_opts)
 trein_sel  = st.sidebar.selectbox("Treineiro", ["Todos", "Não", "Sim"], index=1)
 
+st.sidebar.divider()
+
+# Faixa etária — ordered
+all_faixas_ce = df_ce_full["Faixa Etária"].dropna().unique()
+all_faixas_br = df_br_full["Faixa Etária"].dropna().unique()
+all_faixas    = set(all_faixas_ce) | set(all_faixas_br)
+faixa_opts    = [f for f in FAIXA_ORDER if f in all_faixas]
+faixa_sel     = st.sidebar.multiselect("Faixa Etária", faixa_opts, default=faixa_opts)
+
+st.sidebar.divider()
+
+# Renda — ordered
+all_renda_ce = df_ce_full["Renda Mensal Familiar"].dropna().unique()
+all_renda_br = df_br_full["Renda Mensal Familiar"].dropna().unique()
+all_renda    = set(all_renda_ce) | set(all_renda_br)
+renda_opts   = [r for r in RENDA_ORDER if r in all_renda]
+renda_sel    = st.sidebar.multiselect("Renda Familiar", renda_opts, default=renda_opts)
+
 
 def filtrar(df):
-    m = df["Sexo"].isin(sexo_sel) & df["Tipo de Escola do Ensino Médio"].isin(escola_sel)
-    if trein_sel == "Sim":  m &= df["Treineiro"]
+    m = (
+        df["Sexo"].isin(sexo_sel)
+        & df["Tipo de Escola do Ensino Médio"].isin(escola_sel)
+        & df["Faixa Etária"].isin(faixa_sel)
+        & df["Renda Mensal Familiar"].isin(renda_sel)
+    )
+    if trein_sel == "Sim":   m &= df["Treineiro"]
     elif trein_sel == "Não": m &= ~df["Treineiro"]
     return df[m]
 
 
 fce = filtrar(df_ce_full)
 fbr = filtrar(df_br_full)
-df_main  = fce if escopo == "Ceará" else fbr
-lbl_main = "CE" if escopo == "Ceará" else "BR"
 
 st.sidebar.divider()
-st.sidebar.caption(f"CE: {len(fce):,} registros")
-st.sidebar.caption(f"BR: {len(fbr):,} registros")
+st.sidebar.caption(f"Ceará: {len(fce):,} registros")
+st.sidebar.caption(f"Resto do Brasil: {len(fbr):,} registros")
+
+# ── Validação global ──────────────────────────────────────────────
+_vazio_ce = len(fce) == 0
+_vazio_br = len(fbr) == 0
+if _vazio_ce or _vazio_br:
+    partes = []
+    if _vazio_ce: partes.append("**Ceará**")
+    if _vazio_br: partes.append("**Resto do Brasil**")
+    st.warning(
+        f"⚠️ Nenhum dado disponível para {' e '.join(partes)} com os filtros selecionados. "
+        "Ajuste os filtros na barra lateral.",
+    )
+    st.stop()
 
 
 # ══════════════════════════════════════════════════════════════════
 # HEADER + MÉTRICAS
 # ══════════════════════════════════════════════════════════════════
-st.title("📊 ENEM 2023 · Ceará vs Brasil")
-st.caption("Apenas participantes presentes em todas as provas.")
+st.title("📊 ENEM 2023 · Ceará vs Resto do Brasil")
 st.divider()
 
-qce = desc(fce["Média Geral"])
-qbr = desc(fbr["Média Geral"])
+with st.expander("📌 Premissas e metodologia", expanded=False):
+    st.markdown("""
+**Fonte e período**
+Microdados oficiais do ENEM 2023 (INEP).
 
-if escopo != "CE × BR":
-    q = desc(df_main["Média Geral"])
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Participantes", f"{q['N']:,}")
-    c2.metric("Média",         f"{q['Média']:.1f}")
-    c3.metric("Mediana",       f"{q['Med']:.1f}")
-    c4.metric("DP",            f"{q['DP']:.1f}")
-    c5.metric("Q1",            f"{q['Q1']:.1f}")
-    c6.metric("Q3",            f"{q['Q3']:.1f}")
-else:
-    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-    c1.metric("CE · N",       f"{qce['N']:,}")
-    c2.metric("CE · Média",   f"{qce['Média']:.1f}")
-    c3.metric("CE · Mediana", f"{qce['Med']:.1f}")
-    c4.metric("BR · N",       f"{qbr['N']:,}")
-    c5.metric("BR · Média",   f"{qbr['Média']:.1f}", delta=f"{qbr['Média']-qce['Média']:+.1f}")
-    c6.metric("BR · Mediana", f"{qbr['Med']:.1f}",   delta=f"{qbr['Med']-qce['Med']:+.1f}")
-    c7.metric("Δ Média",      f"{qbr['Média']-qce['Média']:+.2f}")
+**Critérios de inclusão**
+- Presença obrigatória em todas as quatro provas objetivas (Ciências da Natureza, Ciências Humanas, Linguagens e Códigos, Matemática).
+- Disponibilidade de todas as cinco notas, incluindo Redação.
+- Exclusão de participantes classificados como treineiros (por padrão; alterável via filtro).
+- Exclusão de registros com valores faltantes nas variáveis de análise.
+
+**Tratamento de dados**
+- Verificação de duplicatas: nenhuma instância detectada.
+- Análise de outliers (método IQR): nenhuma exclusão realizada; todos os valores dentro do intervalo plausível (0–1000).
+- Dados faltantes: exclusão por listwise nas análises específicas.
+
+**Cálculo de métricas**
+Média Geral: média aritmética simples das cinco notas do participante.
+
+**Segmentação geográfica**
+- **Ceará**: escola de registro em UF = CE.
+- **Resto do Brasil**: demais estados (excluindo Ceará).
+
+**Variáveis socioeconômicas**
+Autodeclaradas no questionário do ENEM. Ordenação de faixas segue sequência oficial, não alfabética.
+
+**Filtros**
+Aplicados simultaneamente e de forma independente aos conjuntos de Ceará e Resto do Brasil.
+""")
 
 st.divider()
 
@@ -224,51 +290,36 @@ tabs = st.tabs([
 with tabs[0]:
     st.subheader("Distribuição da Média Geral")
 
-    if escopo == "CE × BR":
-        fig = go.Figure()
-        for df_, lbl, cor in [(fce, "Ceará", CE_COLOR), (fbr, "Resto do BR", BR_COLOR)]:
-            fig.add_trace(go.Histogram(
-                x=df_["Média Geral"], nbinsx=80, name=lbl,
-                opacity=0.65, histnorm="probability density", marker_color=cor,
-            ))
-            fig.add_vline(x=df_["Média Geral"].median(), line_dash="dash", line_color=cor,
-                          annotation_text=f"Med {lbl}: {df_['Média Geral'].median():.1f}")
-        fig.update_layout(barmode="overlay", xaxis_title="Média Geral", yaxis_title="Densidade",
-                          legend=dict(orientation="h"))
-        st.plotly_chart(fig, use_container_width=True)
+    fig = go.Figure()
+    for df_, lbl, cor in [(fce, "Ceará", CE_COLOR), (fbr, "Resto do Brasil", BR_COLOR)]:
+        fig.add_trace(go.Histogram(
+            x=df_["Média Geral"], nbinsx=80, name=lbl,
+            opacity=0.65, histnorm="probability density", marker_color=cor,
+        ))
+        fig.add_vline(x=df_["Média Geral"].median(), line_dash="dash", line_color=cor,
+                      annotation_text=f"Med {lbl}: {df_['Média Geral'].median():.1f}")
+    fig.update_layout(barmode="overlay", xaxis_title="Média Geral", yaxis_title="Densidade")
+    legend_top(fig)
+    st.plotly_chart(fig, use_container_width=True)
 
-        df_box = pd.concat([fce[["Média Geral"]].assign(Região="Ceará"),
-                            fbr[["Média Geral"]].assign(Região="Resto do Brasil")])
-        fig2 = px.box(df_box, x="Região", y="Média Geral", color="Região", points=False,
-                      color_discrete_map={"Ceará": CE_COLOR, "Resto do Brasil": BR_COLOR})
-        fig2.update_layout(showlegend=False)
-        st.plotly_chart(fig2, use_container_width=True)
+    df_box = pd.concat([fce[["Média Geral"]].assign(Região="Ceará"),
+                        fbr[["Média Geral"]].assign(Região="Resto do Brasil")])
+    fig2 = px.box(df_box, x="Região", y="Média Geral", color="Região", points=False,
+                  color_discrete_map={"Ceará": CE_COLOR, "Resto do Brasil": BR_COLOR})
+    fig2.update_layout(showlegend=False)
+    st.plotly_chart(fig2, use_container_width=True)
 
-        st.subheader("Estatísticas Descritivas")
-        rows = []
-        for k, lbl in [("N","N"),("Média","Média"),("DP","DP"),("Min","Mín"),
-                        ("Q1","Q1"),("Med","Mediana"),("Q3","Q3"),("Max","Máx"),("IQR","IQR")]:
-            rows.append({"Métrica": lbl,
-                         "Ceará":      f"{int(qce[k]):,}" if k=="N" else f"{qce[k]:.2f}",
-                         "Resto do BR": f"{int(qbr[k]):,}" if k=="N" else f"{qbr[k]:.2f}",
-                         "Δ (BR−CE)":  "" if k=="N" else f"{qbr[k]-qce[k]:+.2f}"})
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-
-    else:
-        q = desc(df_main["Média Geral"])
-        c1, c2 = st.columns(2)
-        with c1:
-            fig = go.Figure(go.Histogram(x=df_main["Média Geral"], nbinsx=80,
-                            histnorm="probability density", marker_color=CE_COLOR, opacity=0.8))
-            for val, lbl, cor in [(q["Q1"],"Q1","red"),(q["Med"],"Med","green"),(q["Q3"],"Q3","orange")]:
-                fig.add_vline(x=val, line_dash="dash", line_color=cor,
-                              annotation_text=f"{lbl}: {val:.1f}")
-            fig.update_layout(xaxis_title="Média Geral", yaxis_title="Densidade")
-            st.plotly_chart(fig, use_container_width=True)
-        with c2:
-            fig2 = px.box(df_main, y="Média Geral", points=False,
-                          color_discrete_sequence=[CE_COLOR])
-            st.plotly_chart(fig2, use_container_width=True)
+    st.subheader("Estatísticas Descritivas")
+    qce = desc(fce["Média Geral"])
+    qbr = desc(fbr["Média Geral"])
+    rows = []
+    for k, lbl in [("N","N"),("Média","Média"),("DP","DP"),("Min","Mín"),
+                    ("Q1","Q1"),("Med","Mediana"),("Q3","Q3"),("Max","Máx"),("IQR","IQR")]:
+        rows.append({"Métrica": lbl,
+                     "Ceará":          f"{int(qce[k]):,}" if k=="N" else f"{qce[k]:.2f}",
+                     "Resto do Brasil": f"{int(qbr[k]):,}" if k=="N" else f"{qbr[k]:.2f}",
+                     "Δ (BR−CE)":      "" if k=="N" else f"{qbr[k]-qce[k]:+.2f}"})
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
 # ─────────────────────────────────────
@@ -287,43 +338,37 @@ with tabs[1]:
                          "IQR": round(d["IQR"],2)})
         return pd.DataFrame(rows)
 
-    if escopo == "CE × BR":
-        c1, c2 = st.columns(2)
-        with c1:
-            st.caption("Ceará")
-            st.dataframe(disc_stats(fce), hide_index=True, use_container_width=True)
-        with c2:
-            st.caption("Resto do Brasil")
-            st.dataframe(disc_stats(fbr), hide_index=True, use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.caption("Ceará")
+        st.dataframe(disc_stats(fce), hide_index=True, use_container_width=True)
+    with c2:
+        st.caption("Resto do Brasil")
+        st.dataframe(disc_stats(fbr), hide_index=True, use_container_width=True)
 
-        mce = [fce[c].mean() for c in NOTAS]
-        mbr = [fbr[c].mean() for c in NOTAS]
-        cats = NOTAS_SHORT + [NOTAS_SHORT[0]]
-        fig_rad = go.Figure()
-        fig_rad.add_trace(go.Scatterpolar(r=mce+[mce[0]], theta=cats, fill="toself",
-                          name="Ceará", line_color=CE_COLOR))
-        fig_rad.add_trace(go.Scatterpolar(r=mbr+[mbr[0]], theta=cats, fill="toself",
-                          name="Resto do BR", line_color=BR_COLOR))
-        fig_rad.update_layout(
-            polar=dict(radialaxis=dict(visible=True, range=[400, 630])),
-            legend=dict(orientation="h")
-        )
-        st.plotly_chart(fig_rad, use_container_width=True)
+    mce = [fce[c].mean() for c in NOTAS]
+    mbr = [fbr[c].mean() for c in NOTAS]
+    cats = NOTAS_SHORT + [NOTAS_SHORT[0]]
+    fig_rad = go.Figure()
+    fig_rad.add_trace(go.Scatterpolar(r=mce+[mce[0]], theta=cats, fill="toself",
+                      name="Ceará", line_color=CE_COLOR))
+    fig_rad.add_trace(go.Scatterpolar(r=mbr+[mbr[0]], theta=cats, fill="toself",
+                      name="Resto do Brasil", line_color=BR_COLOR))
+    fig_rad.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[400, 630])),
+    )
+    legend_top(fig_rad)
+    st.plotly_chart(fig_rad, use_container_width=True)
 
-        df_bar = pd.DataFrame({"Disciplina": NOTAS_SHORT*2, "Média": mce+mbr,
-                                "Região": ["Ceará"]*5 + ["Resto do BR"]*5})
-        fig_bar = px.bar(df_bar, x="Disciplina", y="Média", color="Região", barmode="group",
-                         color_discrete_map={"Ceará": CE_COLOR, "Resto do BR": BR_COLOR})
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-    else:
-        st.dataframe(disc_stats(df_main), hide_index=True, use_container_width=True)
-        df_melt = df_main[NOTAS].melt(var_name="Disciplina", value_name="Nota")
-        df_melt["Disciplina"] = df_melt["Disciplina"].map(dict(zip(NOTAS, NOTAS_SHORT)))
-        fig = px.box(df_melt, x="Disciplina", y="Nota", color="Disciplina",
-                     points=False, color_discrete_sequence=COLORWAY)
-        fig.update_layout(showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+    df_bar = pd.DataFrame({
+        "Disciplina": NOTAS_SHORT * 2,
+        "Média": mce + mbr,
+        "Região": ["Ceará"] * 5 + ["Resto do Brasil"] * 5,
+    })
+    fig_bar = px.bar(df_bar, x="Disciplina", y="Média", color="Região", barmode="group",
+                     color_discrete_map={"Ceará": CE_COLOR, "Resto do Brasil": BR_COLOR})
+    legend_top(fig_bar)
+    st.plotly_chart(fig_bar, use_container_width=True)
 
 
 # ─────────────────────────────────────
@@ -343,12 +388,9 @@ with tabs[2]:
         fig.update_layout(yaxis=dict(autorange="reversed"))
         return fig
 
-    if escopo == "CE × BR":
-        c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(renda_fig(fce,"CE",CE_COLOR), use_container_width=True)
-        with c2: st.plotly_chart(renda_fig(fbr,"BR",BR_COLOR), use_container_width=True)
-    else:
-        st.plotly_chart(renda_fig(df_main, lbl_main, CE_COLOR), use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(renda_fig(fce, "Ceará", CE_COLOR), use_container_width=True)
+    with c2: st.plotly_chart(renda_fig(fbr, "Resto do Brasil", BR_COLOR), use_container_width=True)
 
     st.subheader("Renda × Nota por Disciplina")
 
@@ -365,45 +407,33 @@ with tabs[2]:
                       color="Disciplina", markers=True,
                       category_orders={"Renda": ordem},
                       color_discrete_sequence=COLORWAY, title=lbl)
-        fig.update_layout(xaxis_tickangle=-40, legend=dict(orientation="h"))
+        fig.update_layout(xaxis_tickangle=-40)
+        legend_right(fig)
         return fig
 
-    if escopo == "CE × BR":
-        c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(renda_disc_fig(fce,"CE"), use_container_width=True)
-        with c2: st.plotly_chart(renda_disc_fig(fbr,"BR"), use_container_width=True)
-    else:
-        st.plotly_chart(renda_disc_fig(df_main, lbl_main), use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(renda_disc_fig(fce, "Ceará"), use_container_width=True)
+    with c2: st.plotly_chart(renda_disc_fig(fbr, "Resto do Brasil"), use_container_width=True)
 
     st.subheader("Escolaridade dos Responsáveis vs Nota")
     for col_esc in ["Escolaridade do Pai/Responsável Homem",
                     "Escolaridade da Mãe/Responsável Mulher"]:
         st.caption(col_esc.split("/")[0])
-        if escopo == "CE × BR":
-            c1, c2 = st.columns(2)
-            with c1:
-                g = group_stats(fce, col_esc)
-                fig = px.bar(g, x="Média", y=col_esc, orientation="h",
-                             color="Média", color_continuous_scale=["lightgray", CE_COLOR],
-                             text="Média", title="CE")
-                fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
-                fig.update_coloraxes(showscale=False)
-                fig.update_layout(yaxis=dict(autorange="reversed"))
-                st.plotly_chart(fig, use_container_width=True)
-            with c2:
-                g = group_stats(fbr, col_esc)
-                fig = px.bar(g, x="Média", y=col_esc, orientation="h",
-                             color="Média", color_continuous_scale=["lightgray", BR_COLOR],
-                             text="Média", title="BR")
-                fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
-                fig.update_coloraxes(showscale=False)
-                fig.update_layout(yaxis=dict(autorange="reversed"))
-                st.plotly_chart(fig, use_container_width=True)
-        else:
-            g = group_stats(df_main, col_esc)
+        c1, c2 = st.columns(2)
+        with c1:
+            g = group_stats(fce, col_esc)
             fig = px.bar(g, x="Média", y=col_esc, orientation="h",
                          color="Média", color_continuous_scale=["lightgray", CE_COLOR],
-                         text="Média")
+                         text="Média", title="Ceará")
+            fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+            fig.update_coloraxes(showscale=False)
+            fig.update_layout(yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig, use_container_width=True)
+        with c2:
+            g = group_stats(fbr, col_esc)
+            fig = px.bar(g, x="Média", y=col_esc, orientation="h",
+                         color="Média", color_continuous_scale=["lightgray", BR_COLOR],
+                         text="Média", title="Resto do Brasil")
             fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
             fig.update_coloraxes(showscale=False)
             fig.update_layout(yaxis=dict(autorange="reversed"))
@@ -411,24 +441,37 @@ with tabs[2]:
 
     st.subheader("Acesso Digital vs Nota")
 
-    def digital_fig(df, lbl):
-        rows = []
-        for c in ["Acesso à Internet na Residência", "Computador na Residência"]:
-            g = group_stats(df, c)
-            g["Variável"] = c.replace(" na Residência", "")
-            g.rename(columns={c: "Resposta"}, inplace=True)
-            rows.append(g)
-        df_d = pd.concat(rows)
-        fig = px.bar(df_d, x="Resposta", y="Média", color="Variável", barmode="group",
-                     color_discrete_sequence=[CE_COLOR, BR_COLOR], title=lbl)
+    def digital_comparison_fig(df_ce, df_br, col_name, titulo):
+        """Compara Ceará vs Brasil para um tipo de acesso digital."""
+        g_ce = group_stats(df_ce, col_name)
+        g_br = group_stats(df_br, col_name)
+        
+        g_ce["Região"] = "Ceará"
+        g_br["Região"] = "Resto do Brasil"
+        
+        g_ce.rename(columns={col_name: "Resposta"}, inplace=True)
+        g_br.rename(columns={col_name: "Resposta"}, inplace=True)
+        
+        df_combined = pd.concat([g_ce, g_br])
+        
+        fig = px.bar(df_combined, x="Resposta", y="Média", color="Região", barmode="group",
+                     color_discrete_map={"Ceará": CE_COLOR, "Resto do Brasil": BR_COLOR},
+                     title=titulo, text="Média")
+        fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
+        legend_top(fig)
         return fig
 
-    if escopo == "CE × BR":
-        c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(digital_fig(fce,"CE"), use_container_width=True)
-        with c2: st.plotly_chart(digital_fig(fbr,"BR"), use_container_width=True)
-    else:
-        st.plotly_chart(digital_fig(df_main, lbl_main), use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.plotly_chart(
+            digital_comparison_fig(fce, fbr, "Acesso à Internet na Residência", "Acesso à Internet na Residência"),
+            use_container_width=True
+        )
+    with c2:
+        st.plotly_chart(
+            digital_comparison_fig(fce, fbr, "Computador na Residência", "Computador na Residência"),
+            use_container_width=True
+        )
 
 
 # ─────────────────────────────────────
@@ -439,19 +482,16 @@ with tabs[3]:
 
     def escola_fig(df, lbl, cor):
         g = group_stats(df, "Tipo de Escola do Ensino Médio")
-        fig = px.bar(g, x="Tipo de Escola do Ensino Médio", y="Média", error_y="DP",
+        fig = px.bar(g, x="Tipo de Escola do Ensino Médio", y="Média",
                      color="Média", color_continuous_scale=["lightgray", cor],
                      text="Média", title=lbl)
         fig.update_traces(texttemplate="%{text:.1f}", textposition="outside")
         fig.update_coloraxes(showscale=False)
         return fig
 
-    if escopo == "CE × BR":
-        c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(escola_fig(fce,"CE",CE_COLOR), use_container_width=True)
-        with c2: st.plotly_chart(escola_fig(fbr,"BR",BR_COLOR), use_container_width=True)
-    else:
-        st.plotly_chart(escola_fig(df_main, lbl_main, CE_COLOR), use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(escola_fig(fce, "Ceará", CE_COLOR), use_container_width=True)
+    with c2: st.plotly_chart(escola_fig(fbr, "Resto do Brasil", BR_COLOR), use_container_width=True)
 
     st.subheader("Ranking de UFs (Resto do Brasil)")
     uf_g = group_stats(fbr, "Sigla da UF da Escola")
@@ -472,20 +512,19 @@ with tabs[3]:
     st.plotly_chart(fig_uf2, use_container_width=True)
 
     st.subheader("Heatmap — Escola × Disciplina")
-    for df_, lbl, cor in [(fce,"CE",CE_COLOR),(fbr,"BR",BR_COLOR)]:
-        if escopo in ["CE × BR", ("Ceará" if lbl=="CE" else "Resto do Brasil")]:
-            rows = []
-            for escola in df_["Tipo de Escola do Ensino Médio"].dropna().unique():
-                sub = df_[df_["Tipo de Escola do Ensino Médio"] == escola]
-                row = {"Escola": escola}
-                for col, short in zip(NOTAS, NOTAS_SHORT):
-                    row[short] = round(sub[col].mean(), 1)
-                rows.append(row)
-            df_h = pd.DataFrame(rows).set_index("Escola")
-            fig_h = px.imshow(df_h, text_auto=True,
-                              color_continuous_scale=["white", cor],
-                              title=f"Escola × Disciplina — {lbl}")
-            st.plotly_chart(fig_h, use_container_width=True)
+    for df_, lbl, cor in [(fce, "Ceará", CE_COLOR), (fbr, "Resto do Brasil", BR_COLOR)]:
+        rows = []
+        for escola in df_["Tipo de Escola do Ensino Médio"].dropna().unique():
+            sub = df_[df_["Tipo de Escola do Ensino Médio"] == escola]
+            row = {"Escola": escola}
+            for col, short in zip(NOTAS, NOTAS_SHORT):
+                row[short] = round(sub[col].mean(), 1)
+            rows.append(row)
+        df_h = pd.DataFrame(rows).set_index("Escola")
+        fig_h = px.imshow(df_h, text_auto=True,
+                          color_continuous_scale=["white", cor],
+                          title=f"Escola × Disciplina — {lbl}")
+        st.plotly_chart(fig_h, use_container_width=True)
 
 
 # ─────────────────────────────────────
@@ -494,14 +533,14 @@ with tabs[3]:
 with tabs[4]:
     def trio_plot(df, lbl, cor):
         g1 = group_stats(df, "Cor/Raça")
-        f1 = px.bar(g1, x="Cor/Raça", y="Média", error_y="DP",
+        f1 = px.bar(g1, x="Cor/Raça", y="Média",
                     color="Média", color_continuous_scale=["lightgray", cor],
                     text="Média", title=f"Cor/Raça — {lbl}")
         f1.update_traces(texttemplate="%{text:.1f}", textposition="outside")
         f1.update_coloraxes(showscale=False)
 
         g2 = group_stats(df, "Sexo")
-        f2 = px.bar(g2, x="Sexo", y="Média", error_y="DP",
+        f2 = px.bar(g2, x="Sexo", y="Média",
                     color="Média", color_continuous_scale=["lightgray", cor],
                     text="Média", title=f"Sexo — {lbl}")
         f2.update_traces(texttemplate="%{text:.1f}", textposition="outside")
@@ -511,52 +550,68 @@ with tabs[4]:
         g3 = reindex_col(g3, "Faixa Etária", FAIXA_ORDER)
         f3 = px.line(g3, x="Faixa Etária", y="Média", markers=True,
                      color_discrete_sequence=[cor], title=f"Faixa Etária — {lbl}")
-        f3.update_layout(xaxis_tickangle=-40)
+        f3.update_layout(xaxis_tickangle=-40, showlegend=False)
         return f1, f2, f3
 
-    if escopo == "CE × BR":
-        figs_ce = trio_plot(fce, "CE", CE_COLOR)
-        figs_br = trio_plot(fbr, "BR", BR_COLOR)
-        for fce_p, fbr_p in zip(figs_ce, figs_br):
-            c1, c2 = st.columns(2)
-            with c1: st.plotly_chart(fce_p, use_container_width=True)
-            with c2: st.plotly_chart(fbr_p, use_container_width=True)
-    else:
-        for f in trio_plot(df_main, lbl_main, CE_COLOR):
-            st.plotly_chart(f, use_container_width=True)
+    figs_ce = trio_plot(fce, "Ceará", CE_COLOR)
+    figs_br = trio_plot(fbr, "Resto do Brasil", BR_COLOR)
+    for fce_p, fbr_p in zip(figs_ce, figs_br):
+        c1, c2 = st.columns(2)
+        with c1: st.plotly_chart(fce_p, use_container_width=True)
+        with c2: st.plotly_chart(fbr_p, use_container_width=True)
+
+    st.subheader("Faixa Etária × Nota por Disciplina")
+
+    def faixa_disc_fig(df, lbl):
+        rows = []
+        for col, short in zip(NOTAS, NOTAS_SHORT):
+            g = df.groupby("Faixa Etária")[col].mean().reset_index()
+            g.columns = ["Faixa Etária", "Média"]
+            g["Disciplina"] = short
+            rows.append(g)
+        df_fd = pd.concat(rows)
+        ordem = [f for f in FAIXA_ORDER if f in df_fd["Faixa Etária"].values]
+        fig = px.line(df_fd[df_fd["Faixa Etária"].isin(ordem)],
+                      x="Faixa Etária", y="Média", color="Disciplina", markers=True,
+                      category_orders={"Faixa Etária": ordem},
+                      color_discrete_sequence=COLORWAY, title=lbl)
+        fig.update_layout(xaxis_tickangle=-40)
+        legend_right(fig)
+        return fig
+
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(faixa_disc_fig(fce, "Ceará"), use_container_width=True)
+    with c2: st.plotly_chart(faixa_disc_fig(fbr, "Resto do Brasil"), use_container_width=True)
 
     st.subheader("Raça × Sexo")
 
     def raca_sexo_fig(df, lbl):
-        g = df.groupby(["Cor/Raça","Sexo"])["Média Geral"].mean().reset_index()
-        return px.bar(g, x="Cor/Raça", y="Média Geral", color="Sexo", barmode="group",
-                      color_discrete_sequence=[CE_COLOR, BR_COLOR], title=lbl)
+        g = df.groupby(["Cor/Raça", "Sexo"])["Média Geral"].mean().reset_index()
+        fig = px.bar(g, x="Cor/Raça", y="Média Geral", color="Sexo", barmode="group",
+                     color_discrete_sequence=[CE_COLOR, BR_COLOR], title=lbl)
+        legend_top(fig)
+        return fig
 
-    if escopo == "CE × BR":
-        c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(raca_sexo_fig(fce,"CE"), use_container_width=True)
-        with c2: st.plotly_chart(raca_sexo_fig(fbr,"BR"), use_container_width=True)
-    else:
-        st.plotly_chart(raca_sexo_fig(df_main, lbl_main), use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(raca_sexo_fig(fce, "Ceará"), use_container_width=True)
+    with c2: st.plotly_chart(raca_sexo_fig(fbr, "Resto do Brasil"), use_container_width=True)
 
     st.subheader("Raça × Renda × Nota")
 
     def raca_renda_fig(df, lbl):
-        g = df.groupby(["Cor/Raça","Renda Mensal Familiar"])["Média Geral"].mean().reset_index()
+        g = df.groupby(["Cor/Raça", "Renda Mensal Familiar"])["Média Geral"].mean().reset_index()
         ordem = [r for r in RENDA_ORDER if r in g["Renda Mensal Familiar"].values]
         fig = px.line(g[g["Renda Mensal Familiar"].isin(ordem)],
                       x="Renda Mensal Familiar", y="Média Geral", color="Cor/Raça",
                       markers=True, category_orders={"Renda Mensal Familiar": ordem},
                       color_discrete_sequence=COLORWAY, title=lbl)
-        fig.update_layout(xaxis_tickangle=-40, legend=dict(orientation="h"))
+        fig.update_layout(xaxis_tickangle=-40)
+        legend_right(fig)
         return fig
 
-    if escopo == "CE × BR":
-        c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(raca_renda_fig(fce,"CE"), use_container_width=True)
-        with c2: st.plotly_chart(raca_renda_fig(fbr,"BR"), use_container_width=True)
-    else:
-        st.plotly_chart(raca_renda_fig(df_main, lbl_main), use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(raca_renda_fig(fce, "Ceará"), use_container_width=True)
+    with c2: st.plotly_chart(raca_renda_fig(fbr, "Resto do Brasil"), use_container_width=True)
 
 
 # ─────────────────────────────────────
@@ -573,35 +628,9 @@ with tabs[5]:
                          color_continuous_scale=["white", cor],
                          title=lbl)
 
-    if escopo == "CE × BR":
-        c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(corr_fig(fce,"CE",CE_COLOR), use_container_width=True)
-        with c2: st.plotly_chart(corr_fig(fbr,"BR",BR_COLOR), use_container_width=True)
-    else:
-        st.plotly_chart(corr_fig(df_main, lbl_main, CE_COLOR), use_container_width=True)
-
-    st.subheader("Scatter — Duas Disciplinas")
     c1, c2 = st.columns(2)
-    col_x = c1.selectbox("Eixo X", NOTAS_SHORT, index=3)
-    col_y = c2.selectbox("Eixo Y", NOTAS_SHORT, index=4)
-    nota_x = NOTAS[NOTAS_SHORT.index(col_x)]
-    nota_y = NOTAS[NOTAS_SHORT.index(col_y)]
-
-    N_SAMPLE = 3000
-    if escopo == "CE × BR":
-        df_sc = pd.concat([
-            fce[[nota_x, nota_y]].sample(min(N_SAMPLE, len(fce))).assign(Região="CE"),
-            fbr[[nota_x, nota_y]].sample(min(N_SAMPLE, len(fbr))).assign(Região="BR"),
-        ])
-        fig_sc = px.scatter(df_sc, x=nota_x, y=nota_y, color="Região",
-                            color_discrete_map={"CE": CE_COLOR, "BR": BR_COLOR},
-                            opacity=0.3, trendline="ols")
-    else:
-        sample = df_main[[nota_x, nota_y, "Sexo"]].sample(min(N_SAMPLE*2, len(df_main)))
-        fig_sc = px.scatter(sample, x=nota_x, y=nota_y, color="Sexo",
-                            color_discrete_sequence=[CE_COLOR, BR_COLOR],
-                            opacity=0.3, trendline="ols")
-    st.plotly_chart(fig_sc, use_container_width=True)
+    with c1: st.plotly_chart(corr_fig(fce, "Ceará", CE_COLOR), use_container_width=True)
+    with c2: st.plotly_chart(corr_fig(fbr, "Resto do Brasil", BR_COLOR), use_container_width=True)
 
     st.subheader("Correlação Renda × Nota")
 
@@ -622,12 +651,9 @@ with tabs[5]:
         fig.update_coloraxes(showscale=False)
         return fig
 
-    if escopo == "CE × BR":
-        c1, c2 = st.columns(2)
-        with c1: st.plotly_chart(renda_corr_fig(fce,"CE",CE_COLOR), use_container_width=True)
-        with c2: st.plotly_chart(renda_corr_fig(fbr,"BR",BR_COLOR), use_container_width=True)
-    else:
-        st.plotly_chart(renda_corr_fig(df_main, lbl_main, CE_COLOR), use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1: st.plotly_chart(renda_corr_fig(fce, "Ceará", CE_COLOR), use_container_width=True)
+    with c2: st.plotly_chart(renda_corr_fig(fbr, "Resto do Brasil", BR_COLOR), use_container_width=True)
 
 
 # ─────────────────────────────────────
@@ -668,22 +694,18 @@ with tabs[6]:
         g["IQR"] = (g["Q3"] - g["Q1"]).round(2)
         return g.sort_values("Média", ascending=False)
 
-    if escopo == "CE × BR":
-        c1, c2 = st.columns(2)
-        with c1:
-            st.caption("Ceará")
-            st.dataframe(full_table(fce), hide_index=True, use_container_width=True)
-        with c2:
-            st.caption("Resto do Brasil")
-            st.dataframe(full_table(fbr), hide_index=True, use_container_width=True)
-    else:
-        st.dataframe(full_table(df_main), hide_index=True, use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.caption("Ceará")
+        st.dataframe(full_table(fce), hide_index=True, use_container_width=True)
+    with c2:
+        st.caption("Resto do Brasil")
+        st.dataframe(full_table(fbr), hide_index=True, use_container_width=True)
 
     st.divider()
     with st.expander("Todas as disciplinas por grupo"):
         for nota, short in zip(NOTAS + ["Média Geral"], NOTAS_SHORT + ["Média Geral"]):
             st.caption(short)
-            # reusa col_grp mas varia nota
             def _tbl(df, n=nota):
                 g = (df.groupby(col_grp)[n]
                      .agg(N="count", Média="mean", Mediana="median", DP="std",
@@ -691,13 +713,10 @@ with tabs[6]:
                      .round(2).reset_index())
                 g["IQR"] = (g["Q3"] - g["Q1"]).round(2)
                 return g.sort_values("Média", ascending=False)
-            if escopo == "CE × BR":
-                c1, c2 = st.columns(2)
-                with c1: st.dataframe(_tbl(fce), hide_index=True, use_container_width=True)
-                with c2: st.dataframe(_tbl(fbr), hide_index=True, use_container_width=True)
-            else:
-                st.dataframe(_tbl(df_main), hide_index=True, use_container_width=True)
+            c1, c2 = st.columns(2)
+            with c1: st.dataframe(_tbl(fce), hide_index=True, use_container_width=True)
+            with c2: st.dataframe(_tbl(fbr), hide_index=True, use_container_width=True)
 
 
 st.divider()
-st.caption("ENEM 2023 · Ceará × Brasil · presença obrigatória em todas as provas")
+st.caption("ENEM 2023 · Ceará × Resto do Brasil · presença obrigatória em todas as provas")
