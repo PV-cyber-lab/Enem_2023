@@ -31,7 +31,6 @@ PRESENCA = [
 COLS_LOAD = [
     "Sexo", "Faixa Etária", "Cor/Raça", "Treineiro",
     "Tipo de Escola do Ensino Médio", "Sigla da UF da Escola",
-    "Situação de Conclusão do Ensino Médio",
     "Renda Mensal Familiar",
     "Escolaridade do Pai/Responsável Homem",
     "Escolaridade da Mãe/Responsável Mulher",
@@ -107,7 +106,7 @@ def load(path: str) -> pd.DataFrame:
     # Converter colunas para category para otimizar memória
     cat_cols = [
         "Sexo", "Cor/Raça", "Tipo de Escola do Ensino Médio", "Sigla da UF da Escola",
-        "Situação de Conclusão do Ensino Médio", "Renda Mensal Familiar",
+        "Renda Mensal Familiar",
         "Escolaridade do Pai/Responsável Homem", "Escolaridade da Mãe/Responsável Mulher",
         "Acesso à Internet na Residência", "Computador na Residência",
         "Quantidade de Pessoas na Residência",
@@ -305,8 +304,8 @@ with tabs[0]:
             x=df_["Média Geral"], nbinsx=80, name=lbl,
             opacity=0.65, histnorm="probability density", marker_color=cor,
         ))
-        fig.add_vline(x=df_["Média Geral"].median(), line_dash="dash", line_color=cor,
-                      annotation_text=f"Med {lbl}: {df_['Média Geral'].median():.1f}")
+        # fig.add_vline(x=df_["Média Geral"].median(), line_dash="dash", line_color=cor,
+        #               annotation_text=f"Med {lbl}: {df_['Média Geral'].median():.1f}")
     fig.update_layout(barmode="overlay", xaxis_title="Média Geral", yaxis_title="Densidade")
     legend_top(fig)
     st.plotly_chart(fig, use_container_width=True)
